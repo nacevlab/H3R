@@ -1,0 +1,107 @@
+---
+title: "Figure 2"
+author: 
+  - "Matt Paul"
+  - "Bioinformatics Resource Center"
+  - "Rockefeller University"
+date: '2023-04-14'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Figure 2 and S2
+This is a collection of code that was used to generate the plots in Figure 2. 
+
+## Figure 2
+
+### Libraries
+
+```{r}
+library(DESeq2)
+library(dplyr)
+library(magrittr)
+library(stringr)
+library(ComplexHeatmap)
+library(clusterProfiler)
+library(msigdbr)
+library(org.Mm.eg.db)
+library(enrichplot)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(BSgenome.Mmusculus.UCSC.mm10)
+library(rio)
+library(Herper)
+library(ggplot2)
+library(stringr)
+library(ggpubr)
+library(tidyr)
+```
+
+### Figure 2E
+- PCA
+
+```{R}
+normExprs_df <- read.table("GEO/final files/RNA_normalized_counts.tsv", header = T, row.names=1)
+
+rv <- rowVars(data.matrix(normExprs_df))
+select <- order(rv, decreasing=TRUE)[seq_len(min(100000, length(rv)))]
+
+mypca <- prcomp(t(data.matrix(normExprs_df)[select,]))
+
+toplot <- as_tibble(mypca$x)
+toplot %<>% mutate_at(1, as.numeric)
+toplot %<>% mutate_at(2, as.numeric)
+
+toplot$Group <- colnames(normExprs_df)  %>% str_split("_", simplify=T) %>% .[,1]
+toplot %>% ggplot(aes(x=PC1, y=PC2, color=Group)) +geom_point()
+
+```
+
+
+### Figure 2F
+- RNAseq Heatmap of significant (R26vsWT)
+
+
+```{r}
+## differentially expressed genes tables 
+DE_table_WTR26 <- read.table("GEO/final files/RNA_R26C_minus_WT_DEG.tsv", header = T)
+DE_table_WTR2 <- read.table("GEO/final files/RNA_R2C_minus_WT_DEG.tsv", header = T)
+DE_table_filtered <- DE_table_WTR26 %>% filter(padj<0.05 & abs(log2FoldChange) >1)
+DE_table_filtered_R2C <- DE_table_WTR2 %>% filter(padj<0.05 & abs(log2FoldChange) >1)
+
+## RNA counts table
+normExprs_df <- read.table("GEO/final files/RNA_normalized_counts.tsv", header = T, row.names=1)
+
+
+```
+
+```{r}
+DE_select_geneIDs <- DE_table_filtered[, 1]
+normExprs_DEgenes_selectSamples <- normExprs_df[rownames(normExprs_df) %in% DE_select_geneIDs,]
+
+my_grps <- colnames(normExprs_df) %>% str_split("_", simplify=T) %>% .[,1]
+col_df <- data.frame(row.names = colnames(normExprs_df), my_grps)
+colnames(col_df) <- "SampleGroup"
+top_anno <- HeatmapAnnotation(df = col_df)
+
+# scale the matrix 
+normExprs_DEgenes_selectSamples_scale <- t(scale(t(normExprs_DEgenes_selectSamples)))
+      normExprs_DEgenes_selectSamples_scale <- normExprs_DEgenes_selectSamples_scale[, rownames(col_df)] # make sure matrix is in same order of samples as annotations
+      
+      
+ht_anno <- ComplexHeatmap::Heatmap(normExprs_DEgenes_selectSamples_scale,
+                                            cluster_columns = TRUE,
+                                            cluster_rows = TRUE,
+                                            show_row_names = FALSE,
+                                            heatmap_legend_param = list(title = "z-score"),
+                                            column_names_gp = gpar(fontsize = 10),
+                                            top_annotation = top_anno,
+                                            use_raster = TRUE
+)
+
+ht_anno 
+```
+
+
