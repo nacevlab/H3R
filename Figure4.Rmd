@@ -1,0 +1,302 @@
+---
+title: "Figure 4"
+author: 
+  - "Matt Paul"
+  - "Bioinformatics Resource Center"
+  - "Rockefeller University"
+date: '2023-04-14'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Figure 4
+This is a collection of code that was used to generate the plots in Figure 4. 
+
+## Figure 4
+
+### Figure 4A + 4B
+- GO term analysis
+
+```{r}
+library(magrittr)
+library(tibble)
+library(ggplot2)
+library(dplyr)
+library(GO.db)
+library(topGO)
+library(org.Mm.eg.db)
+library(biomaRt)
+library(annotate)
+
+A <- DE_table_WTR26 %>% as_tibble(rownames = 'A') %>% filter(padj<0.05) %>% pull(A)
+D <- DE_table_WTR2 %>% as_tibble(rownames = 'D') %>% filter(padj<0.05) %>% pull(D)
+ENTREZID<-intersect(A,D)
+
+R2CvsR26C <- cbind(ENTREZID, DE_table_WTR2[rownames(DE_table_WTR2) %in%ENTREZID,]$log2FoldChange, DE_table_WTR26[rownames(DE_table_WTR26) %in%ENTREZID,]$log2FoldChange)
+
+R2CvsR26C %<>% as_tibble() %>% as_tibble() %>% dplyr::rename(log2FC_R2C=V2) %>% dplyr::rename(log2FC_R26C=V3) %>% filter(log2FC_R2C>0&log2FC_R26C>0 |  log2FC_R2C<0&log2FC_R26C<0)
+
+db_mm= useMart('ENSEMBL_MART_ENSEMBL',dataset="mmusculus_gene_ensembl")
+go_ids= getBM(attributes=c('go_id', "entrezgene_id", 'namespace_1003'), mart=db_mm)
+gene_2_GO=unstack(go_ids[,c(1,2)])
+all_genes<-names(gene_2_GO)
+
+doGO<-function(IDs){
+# remove any candidate genes without GO annotation
+keep <- IDs %in% all_genes
+keep <- which(keep==TRUE)
+test_genes <- IDs[keep]
+
+if(length(test_genes)!=0){
+# make named factor showing which genes are of interest
+geneList <- factor(as.integer(all_genes %in% IDs))
+names(geneList) <- all_genes
+
+GOdata<-new("topGOdata",ontology = "BP",allGenes = geneList,nodeSize = 4, annot= annFUN.gene2GO, gene2GO =gene_2_GO)
+
+resultfisher <- runTest(GOdata, "classic", "fisher")
+resultfisher.weight <- runTest(GOdata, "weight", "fisher")
+
+      
+allRes <- GenTable(GOdata, resultfisher,resultfisher.weight,topNodes=length(GOdata@graph@nodes))
+}else{
+ allRes<-data.frame("No Overlap Genes")
+}
+
+return(allRes)}
+
+R2CvsR26C_mouse_go<-doGO(R2CvsR26C %>% pull(ENTREZID))
+
+
+```
+
+```{py}
+ Create a csv file from TOPGO analysis with first column depicting GO Terms, 2nd column depicting -log10(result2), 3rd column depicting Significant/Expected
+#Import libraries
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colors as colors
+import matplotlib.cbook as cbook
+from matplotlib.cm import ScalarMappable
+import matplotlib
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+#Set plotting parameters
+matplotlib.rcParams['mathtext.fontset'] = 'custom'
+matplotlib.rcParams['mathtext.it'] = 'Arial:italic'
+matplotlib.rcParams['mathtext.rm'] = 'Arial'
+matplotlib.rcParams['font.family'] = 'Arial'
+matplotlib.rcParams['axes.linewidth'] = 4
+matplotlib.rcParams['xtick.major.size'] = 10
+matplotlib.rcParams['xtick.major.width'] = 4
+matplotlib.rcParams['ytick.major.size'] = 10
+matplotlib.rcParams['ytick.major.width'] = 4
+matplotlib.rcParams.update({'font.size': 30})
+matplotlib.rc('font', weight=5)
+lw_param = 3
+colors = ['tab:blue','tab:green','tab:purple','tab:gray','tab:olive'
+          ,'tab:orange','tab:red','tab:brown','tab:pink','tab:cyan'] 
+fig, (ax1) = plt.subplots(figsize=(15, 10),nrows=1, ncols=1)
+
+# Read csv data
+file_name = "R2CvsR26C_mouse_same_direction_GO.csv"
+data = np.loadtxt(file_name,delimiter = ',',dtype = str)
+name = data[:,0]
+Sig_Exp = np.float64(data[:,2])
+p_val = np.float64(data[:,1])
+Z= Sig_Exp
+Y= name
+X= p_val
+
+
+data_color = [x / max(Z) for x in Z]
+
+# Generate plot
+plt_ax = ax1.scatter(X, Y, s= 500, c=Z, cmap='winter')
+
+ax1.set_xlabel("-Log$_{10}$ [Elim statistic]")
+ax1.set_ylabel(" GO terms")
+
+cbar1 = plt.colorbar(plt_ax,ax=ax1)
+cbar1.ax.set_title("Sig/Exp")  
+
+red_list = [6,8,9,10,13,15,17,18]
+
+for itr, t in enumerate(ax1.yaxis.get_ticklabels()):
+    print(itr)
+    if itr in red_list:
+        t.set_color('red') 
+
+plt.savefig('R2CvsR26C_mouse_same_direction_GO.pdf',dpi =900, bbox_inches = "tight")
+
+```
+
+### Figure 4C
+
+- Violin plots of RNAseq at significant C+R peaks
+
+```{r}
+dge_temp <- rio::import("GEO/final files/ChIP_R26C_minus_WT_annotated.xlsx")
+rna_res <- DE_table_WTR26
+```
+
+```{r}
+is.na(dge_temp$padj)[is.na(dge_temp$padj) ]<-1
+all_temp <- rna_res %>% as_tibble(rownames = "ENTREZ") %>% full_join(dge_temp, by=c("ENTREZ" = "geneId")) %>% dplyr::mutate(class=ifelse(!(padj.y<0.001), "NS",ifelse(log2FoldChange.y>0,"Up", "Down"))) %>% dplyr::filter(distanceToTSS==0)
+all_temp <- all_temp[!is.na(all_temp$class), ]
+  
+all_temp %>% mutate(class=factor(class, levels=c("Up", "Down", "NS"))) %>% ggplot( aes(x=log2FoldChange.x, y=class)) +geom_violin() +coord_flip() +ggtitle(paste0("L2fc gene expression at genes with H3K27me3 SEACR peaks \nthat significantly change (padj<0.001), comparing WT to mutant R26C")) + xlab("log2FC(Mutant/WT)")+ theme_bw() + geom_signif(test="wilcox.test", comparisons = combn(unique(all_temp$class),2, simplify = F),step_increase = 0.2)
+
+```
+
+### Figure 4D
+- Motif analysis at R26C
+
+```{R}
+
+install_CondaTools("meme", "meme", pathToMiniConda = "../mini")
+meme_path_id="../mini/envs/meme/bin/"
+
+```
+
+```{r}
+
+require(JASPAR2020)
+db <- file.path(system.file("extdata", package="JASPAR2020"),
+                "JASPAR2020.sqlite")
+opts <- list()
+opts[["tax_group"]] <- "vertebrates"
+opts[["collection"]] <- "CORE"
+opts[["all_versions"]] <- FALSE
+require(TFBSTools)
+motifs <- getMatrixSet(db,opts)
+uni_format_motif <- universalmotif::convert_motifs(motifs)
+
+```
+
+```{r}
+
+is.na(dge_temp$padj)[is.na(dge_temp$padj) ]<-1
+all_temp <- rna_res %>% as_tibble(rownames = "ENTREZ") %>% full_join(dge_temp, by=c("ENTREZ" = "geneId")) %>% dplyr::mutate(class=ifelse(!(padj.y<0.001), "NS",ifelse(log2FoldChange.y>0,"Up", "Down"))) %>% dplyr::filter(distanceToTSS==0)
+
+
+all_temp <- all_temp[!is.na(all_temp$class), ]
+all_temp %<>% mutate(class=factor(class, levels=c("Up", "Down", "NS"))) 
+all_temp <- all_temp[!is.na(all_temp$log2FoldChange.x),]
+
+all_genes <- genes(TxDb.Mmusculus.UCSC.mm10.knownGene)
+promoter_ranges <- promoters(all_genes,  upstream=1000, downstream=200)
+promoter_ranges_alldownpeaks <- promoter_ranges[promoter_ranges$gene_id %in% all_temp$ENTREZ[all_temp$class=="Down"]]
+
+peaksSequences_alldownpeaks <- getSeq(BSgenome.Mmusculus.UCSC.mm10, promoter_ranges_alldownpeaks)
+writeXStringSet(peaksSequences_alldownpeaks, file = "fa/prom_alldownpeaks.fa")
+
+dreme_results_alldownpeaks_shuff <- runDreme(input = peaksSequences_alldownpeaks,
+                  control = "shuffle",
+                  e = 50,
+                  outdir = "meme_all",
+                  meme_path = meme_path_id)
+
+TomTom_results_all_down <- runTomTom(dreme_results_alldownpeaks_shuff, 
+                                   uni_format_motif, 
+                                   outdir = "R26C/tomtom_alldown_shuffle",
+                                   meme_path = meme_path_id)
+
+```
+
+
+### Figure 4E
+- Gene set enrichment analysis of R26vsWT. Pathways are from MSigDB Hallmarks
+
+```{r}
+
+rnk_df <- DE_table_WTR26 %>% na.omit %>%
+  arrange(desc(stat)) %>%
+  dplyr::select(1, stat)
+rnk_vector <- rnk_df[,2]
+names(rnk_vector) <- rnk_df[,1]
+
+over_rep_active_categories <- NULL
+gsea_active_categories <- c('MSigDB hallmark' = "msig.H")
+
+category_list <- list()
+
+if (!is.null(gsea_active_categories)){
+  for(i in seq_along(gsea_active_categories)){
+    gsea_term_tmp <- gsea_active_categories[i]
+    category_list[["gsea"]][[names(gsea_term_tmp)]] <- str_split(gsea_term_tmp, pattern = "\\.")
+  }
+}
+
+over_rep_output_list <- list()
+gsea_output <- list()
+GO_to_gene_lists <- list()
+
+i=1
+x=1
+
+active_category <- names(category_list[[i]])[x] 
+category <- category_list[[i]][[x]][[1]][[2]]
+      if (length(category_list[[i]][[x]][[1]]) == 2){
+        subcategory <- NULL
+      }else if(length(category_list[[i]][[x]][[1]]) == 3){
+        subcategory <- category_list[[i]][[x]][[1]][[3]]
+      }
+      
+
+msig_t2g <- msigdbr(species = "Mus musculus", 
+                          category = category, 
+                          subcategory = subcategory) %>% 
+        dplyr::select(gs_name, entrez_gene)
+      
+      GO_to_gene_lists[[active_category]] <- split(msig_t2g, msig_t2g$gs_name) %>%
+        lapply(as.data.frame) %>%
+        lapply(function(x) x[,2])
+      
+        set.seed(0)
+        gsea_output[[active_category]] <- GSEA(rnk_vector, 
+                                               TERM2GENE = msig_t2g, 
+                                               seed = TRUE, 
+                                               pvalueCutoff = 1,
+                                               eps = 1e-100)
+
+
+
+        
+gsea_output_df <- list()
+if (!is.null(gsea_active_categories)){
+  for(i in seq_along(gsea_active_categories)){
+    gsea_term_tmp <- names(gsea_active_categories)[i]
+    gsea_output_df[[gsea_term_tmp]] <- data.frame(gsea_output[[gsea_term_tmp]])
+    genes_in_cat <- gsea_output_df[[gsea_term_tmp]]$core_enrichment
+    genes_in_cat <- str_split(genes_in_cat, pattern = "\\/")
+    symbol_genes_in_cat <- sapply(1:length(genes_in_cat), function(x){ AnnotationDbi::select(x=org.Mm.eg.db,keys=genes_in_cat[[x]],columns="SYMBOL",keytype="ENTREZID")[,2] })
+    
+    # this last column is a list, we will turn into a character vector
+    symbol_genes_in_cat <- lapply(symbol_genes_in_cat, paste, collapse = ",")
+    core_enrichment_symbol <- do.call(rbind, symbol_genes_in_cat)
+    gsea_output_df[[gsea_term_tmp]] <- cbind(gsea_output_df[[gsea_term_tmp]], 
+                                             core_enrichment_symbol)
+    
+  }
+}
+```
+
+```{r}
+gseaplot2(gsea_output[[active_category]], geneSetID = "HALLMARK_ANGIOGENESIS")
+gseaplot2(gsea_output[[active_category]], geneSetID = "HALLMARK_MYC_TARGETS_V1")
+gseaplot2(gsea_output[[active_category]], geneSetID = "HALLMARK_HYPOXIA")
+gseaplot2(gsea_output[[active_category]], geneSetID = "HALLMARK_MYOGENESIS")
+
+```
+
+
+
+
+
+
+
+
