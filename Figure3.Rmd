@@ -2,9 +2,7 @@
 title: "Figure 3"
 author: 
   - "Matt Paul"
-  - "Doug Barrows"
   - "Bioinformatics Resource Center"
-  - "Yakshi Dabas"
   - "Rockefeller University"
 date: '2023-04-14'
 output: html_document
@@ -14,241 +12,273 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Figure 3
+## Figure 3
 This is a collection of code that was used to generate the plots in Figure 3. 
 
-## Libraries
+### Libraries
 ```{r}
-library(DESeq2)
-library(dplyr)
-library(magrittr)
-library(stringr)
-library(ComplexHeatmap)
-library(clusterProfiler)
 library(msigdbr)
-library(org.Mm.eg.db)
-library(enrichplot)
+library(clusterProfiler)
+library(profileplyr)
+library(rtracklayer)
+library(ChIPseeker)
 library(TxDb.Mmusculus.UCSC.mm10.knownGene)
-library(BSgenome.Mmusculus.UCSC.mm10)
-library(rio)
-library(Herper)
-library(ggplot2)
-library(stringr)
-library(ggpubr)
+library(org.Mm.eg.db)
 ```
 
 
-## Figure 3A
-- RNAseq Heatmap of significant (R26vsWT)
-
-
-```{r}
-## differentially expressed genes tables 
-DE_table_WTR26 <- read.table("GEO/final files/RNA_R26C_minus_WT_DEG.tsv", header = T)
-DE_table_WTR2 <- read.table("GEO/final files/RNA_R2C_minus_WT_DEG.tsv", header = T)
-DE_table_filtered <- DE_table_WTR26 %>% filter(padj<0.05 & abs(log2FoldChange) >1)
-DE_table_filtered_R2C <- DE_table_WTR2 %>% filter(padj<0.05 & abs(log2FoldChange) >1)
-
-## RNA counts table
-normExprs_df <- read.table("GEO/final files/RNA_normalized_counts.tsv", header = T, row.names=1)
-
-
-```
+### Figure 3A
+- Gene set dotplot
 
 ```{r}
-DE_select_geneIDs <- DE_table_filtered[, 1]
-normExprs_DEgenes_selectSamples <- normExprs_df[rownames(normExprs_df) %in% DE_select_geneIDs,]
+DE_table_WTR2_CR <- read.table("GEO/final files/CR_H3K27me3atH3K27me3_R2C_minus_WT_DEG.tsv", header = T)
+DE_table_WTR26_CR <- read.table("GEO/final files/CR_H3K27me3atH3K27me3_R26C_minus_WT_DEG.tsv", header = T)
 
-my_grps <- colnames(normExprs_df) %>% str_split("_", simplify=T) %>% .[,1]
-col_df <- data.frame(row.names = colnames(normExprs_df), my_grps)
-colnames(col_df) <- "SampleGroup"
-top_anno <- HeatmapAnnotation(df = col_df)
 
-# scale the matrix 
-normExprs_DEgenes_selectSamples_scale <- t(scale(t(normExprs_DEgenes_selectSamples)))
-      normExprs_DEgenes_selectSamples_scale <- normExprs_DEgenes_selectSamples_scale[, rownames(col_df)] # make sure matrix is in same order of samples as annotations
-      
-      
-ht_anno <- ComplexHeatmap::Heatmap(normExprs_DEgenes_selectSamples_scale,
-                                            cluster_columns = TRUE,
-                                            cluster_rows = TRUE,
-                                            show_row_names = FALSE,
-                                            heatmap_legend_param = list(title = "z-score"),
-                                            column_names_gp = gpar(fontsize = 10),
-                                            top_annotation = top_anno,
-                                            use_raster = TRUE
+combined_GO <-list(
+  DE_table_WTR2_CR %>%  dplyr::filter(distanceToTSS == 0) %>% dplyr::filter(padj < 0.001) %>%  dplyr::pull(geneId) %>% unique(),
+     DE_table_WTR26_CR %>%  dplyr::filter(distanceToTSS == 0) %>% dplyr::filter(padj < 0.001) %>%  dplyr::pull(geneId) %>% unique()
 )
 
-ht_anno 
+m_df <- msigdbr(species = "Homo sapiens")
+POLY<- m_df %>% dplyr::filter(grepl("Polycomb|PRC2|K27me3", gs_description, ignore.case=TRUE)) %>% dplyr::select(c(3,5))
+
+compared_k27 <- compareCluster(geneCluster = combined_GO , fun = "enricher", TERM2GENE=POLY)
+
+p <-dotplot(compared_k27 ,showCategory=8)
+p+ theme(axis.text.x = element_text(angle = 90, size = 6),axis.text.y = element_text(size = 6))+ ggtitle("Polycomb related MSigdb genesets theme comparison of H3K27me3 peaks that sig change annotated to genes")
+
+
 ```
 
-## Figure 3B + 3C
 
-```{py}
-
-
-
-```
-
-## Figure 3D
-
-- Violin plots of RNAseq at significant C+R peaks
+### Figure 3B, 3C, 3F and 3G
+- Region plots
 
 ```{r}
-dge_temp <- rio::import("GEO/final files/ChIP_R26C_minus_WT_annotated.xlsx")
-rna_res <- DE_table_WTR26
+
+chip_bw <- dir("/GEO/final files/CR/H3K27me3/mean/", pattern=".bw", full.names = T)
+
+bed <- paste0("/GEO/final files/CR/H3K27me3/K27_R2sig_peaks.bed")
+
+chipProfile_peaks <- BamBigwig_to_chipProfile(signalFiles = chip_bw,
+                         testRanges = bed,
+                         format = "bigwig",
+                         style = "point", 
+                         distanceAround=10000,
+                         bin_size = 200)
+
+proplyr_object_peaks <- as_profileplyr(chipProfile_peaks)
+
+row.names(sampleData(proplyr_object_peaks)) <- chip_bw %>% basename()
+
+rowData(proplyr_object_peaks )$sgGroup<-'K27me3 at center of R2 significant SEACR peak +/- 10kb'
+
+generateEnrichedHeatmap(proplyr_object_peaks, matrices_color = c("blue", "yellow", "red"))
 ```
-
-```{r}
-is.na(dge_temp$padj)[is.na(dge_temp$padj) ]<-1
-all_temp <- rna_res %>% as_tibble(rownames = "ENTREZ") %>% full_join(dge_temp, by=c("ENTREZ" = "geneId")) %>% dplyr::mutate(class=ifelse(!(padj.y<0.001), "NS",ifelse(log2FoldChange.y>0,"Up", "Down"))) %>% dplyr::filter(distanceToTSS==0)
-all_temp <- all_temp[!is.na(all_temp$class), ]
-  
-all_temp %>% mutate(class=factor(class, levels=c("Up", "Down", "NS"))) %>% ggplot( aes(x=log2FoldChange.x, y=class)) +geom_violin() +coord_flip() +ggtitle(paste0("L2fc gene expression at genes with H3K27me3 SEACR peaks \nthat significantly change (padj<0.001), comparing WT to mutant R26C")) + xlab("log2FC(Mutant/WT)")+ theme_bw() + geom_signif(test="wilcox.test", comparisons = combn(unique(all_temp$class),2, simplify = F),step_increase = 0.2)
-
-```
-
-## Figure 3E
-- Motif analysis at R26C
 
 ```{R}
 
-install_CondaTools("meme", "meme", pathToMiniConda = "../mini")
-meme_path_id="../mini/envs/meme/bin/"
+bed <- paste0("/GEO/final files/CR/H3K27me3/K27_R26sig_peaks.bed")
+
+chipProfile_peaks <- BamBigwig_to_chipProfile(signalFiles = chip_bw,
+                         testRanges = bed,
+                         format = "bigwig",
+                         style = "point", 
+                         distanceAround=10000,
+                         bin_size = 200)
+
+proplyr_object_peaks <- as_profileplyr(chipProfile_peaks)
+
+row.names(sampleData(proplyr_object_peaks)) <- chip_bw %>% basename()
+
+rowData(proplyr_object_peaks )$sgGroup<-'K27me3 at center of R26 significant SEACR peak +/- 10kb'
+
+generateEnrichedHeatmap(proplyr_object_peaks, matrices_color = c("blue", "yellow", "red"))
+
 
 ```
 
 ```{r}
 
-require(JASPAR2020)
-db <- file.path(system.file("extdata", package="JASPAR2020"),
-                "JASPAR2020.sqlite")
-opts <- list()
-opts[["tax_group"]] <- "vertebrates"
-opts[["collection"]] <- "CORE"
-opts[["all_versions"]] <- FALSE
-require(TFBSTools)
-motifs <- getMatrixSet(db,opts)
-uni_format_motif <- universalmotif::convert_motifs(motifs)
+chip_bw <- dir("/GEO/final files/CR/H3K27me3/mean/", pattern=".bw", full.names = T)
 
+bed <- paste0("/GEO/final files/CR/H3K27me3/K27_R2sig_loss_200_peaks.bed")
+
+chipProfile_peaks <- BamBigwig_to_chipProfile(signalFiles = chip_bw,
+                         testRanges = bed,
+                         format = "bigwig",
+                         style = "point", 
+                         distanceAround=10000,
+                         bin_size = 200)
+
+proplyr_object_peaks <- as_profileplyr(chipProfile_peaks)
+
+row.names(sampleData(proplyr_object_peaks)) <- chip_bw %>% basename()
+
+rowData(proplyr_object_peaks )$sgGroup<-'K27me3 at center of R2 significant loss (bottom 200) SEACR peak +/- 10kb'
+
+generateEnrichedHeatmap(proplyr_object_peaks, matrices_color = c("blue", "yellow", "red"))
+```
+
+```{R}
+
+bed <- paste0("/GEO/final files/CR/H3K27me3/K27_R26sig_loss_200_peaks.bed")
+
+chipProfile_peaks <- BamBigwig_to_chipProfile(signalFiles = chip_bw,
+                         testRanges = bed,
+                         format = "bigwig",
+                         style = "point", 
+                         distanceAround=10000,
+                         bin_size = 200)
+
+proplyr_object_peaks <- as_profileplyr(chipProfile_peaks)
+
+row.names(sampleData(proplyr_object_peaks)) <- chip_bw %>% basename()
+
+rowData(proplyr_object_peaks )$sgGroup<-'K27me3 at center of R26 significant loss (bottom 200) SEACR peak +/- 10kb'
+
+generateEnrichedHeatmap(proplyr_object_peaks, matrices_color = c("blue", "yellow", "red"))
+
+
+```
+
+
+### Figure 3H
+```{R}
+a <- rtracklayer::import("/GEO/final files/CR/H3K27me3/K27_consensus_peaks.bed")
+b <- rtracklayer::import("/GEO/final files/CR/H3K27me3/K27_R2sig_down_peaks.bed")
+c <- rtracklayer::import("/GEO/final files/CR/H3K27me3/K27_R26sig_down_peaks.bed")
+d <- rtracklayer::import("/GEO/final files/CR/H3K27me3/K27_R2sig_up_peaks.bed")
+e <- rtracklayer::import("/GEO/final files/CR/H3K27me3/K27_R26sig_up_peaks.bed")  
+
+anno_1 <- ChIPseeker::annotatePeak(a ,TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene, annoDb = "org.Mm.eg.db", verbose=F)
+ChIPseeker::plotAnnoBar(anno_1) 
+
+anno_2 <- ChIPseeker::annotatePeak(b ,TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene, annoDb = "org.Mm.eg.db", verbose=F)
+ChIPseeker::plotAnnoBar(anno_2) 
+
+anno_3 <- ChIPseeker::annotatePeak(c ,TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene, annoDb = "org.Mm.eg.db", verbose=F)
+ChIPseeker::plotAnnoBar(anno_3) 
+
+anno_4 <- ChIPseeker::annotatePeak(d ,TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene, annoDb = "org.Mm.eg.db", verbose=F)
+ChIPseeker::plotAnnoBar(anno_4) 
+
+anno_5 <- ChIPseeker::annotatePeak(e ,TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene, annoDb = "org.Mm.eg.db", verbose=F)
+ChIPseeker::plotAnnoBar(anno_5) 
+```
+
+## Figure S3
+### Figure S3A
+- Volcano plots of C+R
+
+```{r}
+DE_table_WTR2_CR <- read.table("GEO/final files/CR_H3K27me3atH3K27me3_R2C_minus_WT_DEG.tsv", header = T)
+DE_table_WTR26_CR <- read.table("GEO/final files/CR_H3K27me3atH3K27me3_R26C_minus_WT_DEG.tsv", header = T)
+
+EnhancedVolcano(DE_table_WTR2_CR,
+    labSize=2,
+    title = paste("K27me3 signal at K27me3 SEACR peaks \n in WT vs R2C"),
+    x = 'log2FoldChange',
+    y = 'padj',
+    pCutoff = 0.05,
+    subtitle ="",
+    ylab = bquote(~-Log[10]~italic(padj)),
+    legendLabels = c('NS', expression(Log[2]~FC),
+    'padj', expression(padj~and~log[2]~FC)))
+
+EnhancedVolcano(DE_table_WTR26_CR,
+    labSize=2,
+    title = paste("K27me3 signal at K27me3 SEACR peaks \n in WT vs R62C"),
+    x = 'log2FoldChange',
+    y = 'padj',
+    pCutoff = 0.05,
+    subtitle ="",
+    ylab = bquote(~-Log[10]~italic(padj)),
+    legendLabels = c('NS', expression(Log[2]~FC),
+    'padj', expression(padj~and~log[2]~FC)))
+
+```
+
+### Figure S3B and S3C
+- Region plots of C+R
+
+```{r}
+
+chip_bw <- dir("/GEO/final files/CR/H3K27me3/mean/", pattern=".bw", full.names = T)
+
+bed <- paste0("/GEO/final files/CR/H3K27me3/K27_consensus_peaks.bed")
+
+chipProfile_peaks <- BamBigwig_to_chipProfile(signalFiles = chip_bw,
+                         testRanges = bed,
+                         format = "bigwig",
+                         style = "point", 
+                         distanceAround=10000,
+                         bin_size = 200)
+
+proplyr_object_peaks <- as_profileplyr(chipProfile_peaks)
+
+row.names(sampleData(proplyr_object_peaks)) <- chip_bw %>% basename()
+
+rowData(proplyr_object_peaks )$sgGroup<-'K27me3 at center of K27me3 SEACR peak +/- 10kb'
+
+generateEnrichedHeatmap(proplyr_object_peaks, matrices_color = c("blue", "yellow", "red"))
 ```
 
 ```{r}
 
-is.na(dge_temp$padj)[is.na(dge_temp$padj) ]<-1
-all_temp <- rna_res %>% as_tibble(rownames = "ENTREZ") %>% full_join(dge_temp, by=c("ENTREZ" = "geneId")) %>% dplyr::mutate(class=ifelse(!(padj.y<0.001), "NS",ifelse(log2FoldChange.y>0,"Up", "Down"))) %>% dplyr::filter(distanceToTSS==0)
+chip_bw <- dir("/GEO/final files/CR/H3K27me3/singlerep/", pattern=".bw", full.names = T)
 
+bed <- paste0("/GEO/final files/CR/H3K27me3/K27_consensus_peaks.bed")
 
-all_temp <- all_temp[!is.na(all_temp$class), ]
-all_temp %<>% mutate(class=factor(class, levels=c("Up", "Down", "NS"))) 
-all_temp <- all_temp[!is.na(all_temp$log2FoldChange.x),]
+chipProfile_peaks <- BamBigwig_to_chipProfile(signalFiles = chip_bw,
+                         testRanges = bed,
+                         format = "bigwig",
+                         style = "point", 
+                         distanceAround=10000,
+                         bin_size = 200)
 
-all_genes <- genes(TxDb.Mmusculus.UCSC.mm10.knownGene)
-promoter_ranges <- promoters(all_genes,  upstream=1000, downstream=200)
-promoter_ranges_alldownpeaks <- promoter_ranges[promoter_ranges$gene_id %in% all_temp$ENTREZ[all_temp$class=="Down"]]
+proplyr_object_peaks <- as_profileplyr(chipProfile_peaks)
 
-peaksSequences_alldownpeaks <- getSeq(BSgenome.Mmusculus.UCSC.mm10, promoter_ranges_alldownpeaks)
-writeXStringSet(peaksSequences_alldownpeaks, file = "fa/prom_alldownpeaks.fa")
+row.names(sampleData(proplyr_object_peaks)) <- chip_bw %>% basename()
 
-dreme_results_alldownpeaks_shuff <- runDreme(input = peaksSequences_alldownpeaks,
-                  control = "shuffle",
-                  e = 50,
-                  outdir = "meme_all",
-                  meme_path = meme_path_id)
+rowData(proplyr_object_peaks )$sgGroup<-'K27me3 at center of K27me3 SEACR peak +/- 10kb'
 
-TomTom_results_all_down <- runTomTom(dreme_results_alldownpeaks_shuff, 
-                                   uni_format_motif, 
-                                   outdir = "R26C/tomtom_alldown_shuffle",
-                                   meme_path = meme_path_id)
+generateEnrichedHeatmap(proplyr_object_peaks, matrices_color = c("blue", "yellow", "red"))
 
 ```
 
 
-## Figure 3F
-- Gene set enrichment analysis of R26vsWT. Pathways are from MSigDB Hallmarks
+
+
+### Figure S3C
+
+- Volcano plots of C+R
 
 ```{r}
+DE_table_WTR2_CR <- read.table("GEO/final files/CR_HAatH3K27me3_R2C_minus_WT_DEG.tsv", header = T)
+DE_table_WTR26_CR <- read.table("GEO/final files/CR_HAatH3K27me3_R26C_minus_WT_DEG.tsv", header = T)
 
-rnk_df <- DE_table_WTR26 %>% na.omit %>%
-  arrange(desc(stat)) %>%
-  dplyr::select(1, stat)
-rnk_vector <- rnk_df[,2]
-names(rnk_vector) <- rnk_df[,1]
+EnhancedVolcano(DE_table_WTR2_CR,
+    labSize=2,
+    title = paste("HA signal at K27me3 SEACR peaks \n in WT vs R2C"),
+    x = 'log2FoldChange',
+    y = 'padj',
+    pCutoff = 0.05,
+    subtitle ="",
+    ylab = bquote(~-Log[10]~italic(padj)),
+    legendLabels = c('NS', expression(Log[2]~FC),
+    'padj', expression(padj~and~log[2]~FC)))
 
-over_rep_active_categories <- NULL
-gsea_active_categories <- c('MSigDB hallmark' = "msig.H")
-
-category_list <- list()
-
-if (!is.null(gsea_active_categories)){
-  for(i in seq_along(gsea_active_categories)){
-    gsea_term_tmp <- gsea_active_categories[i]
-    category_list[["gsea"]][[names(gsea_term_tmp)]] <- str_split(gsea_term_tmp, pattern = "\\.")
-  }
-}
-
-over_rep_output_list <- list()
-gsea_output <- list()
-GO_to_gene_lists <- list()
-
-i=1
-x=1
-
-active_category <- names(category_list[[i]])[x] 
-category <- category_list[[i]][[x]][[1]][[2]]
-      if (length(category_list[[i]][[x]][[1]]) == 2){
-        subcategory <- NULL
-      }else if(length(category_list[[i]][[x]][[1]]) == 3){
-        subcategory <- category_list[[i]][[x]][[1]][[3]]
-      }
-      
-
-msig_t2g <- msigdbr(species = "Mus musculus", 
-                          category = category, 
-                          subcategory = subcategory) %>% 
-        dplyr::select(gs_name, entrez_gene)
-      
-      GO_to_gene_lists[[active_category]] <- split(msig_t2g, msig_t2g$gs_name) %>%
-        lapply(as.data.frame) %>%
-        lapply(function(x) x[,2])
-      
-        set.seed(0)
-        gsea_output[[active_category]] <- GSEA(rnk_vector, 
-                                               TERM2GENE = msig_t2g, 
-                                               seed = TRUE, 
-                                               pvalueCutoff = 1,
-                                               eps = 1e-100)
-
-
-
-        
-gsea_output_df <- list()
-if (!is.null(gsea_active_categories)){
-  for(i in seq_along(gsea_active_categories)){
-    gsea_term_tmp <- names(gsea_active_categories)[i]
-    gsea_output_df[[gsea_term_tmp]] <- data.frame(gsea_output[[gsea_term_tmp]])
-    genes_in_cat <- gsea_output_df[[gsea_term_tmp]]$core_enrichment
-    genes_in_cat <- str_split(genes_in_cat, pattern = "\\/")
-    symbol_genes_in_cat <- sapply(1:length(genes_in_cat), function(x){ AnnotationDbi::select(x=org.Mm.eg.db,keys=genes_in_cat[[x]],columns="SYMBOL",keytype="ENTREZID")[,2] })
-    
-    # this last column is a list, we will turn into a character vector
-    symbol_genes_in_cat <- lapply(symbol_genes_in_cat, paste, collapse = ",")
-    core_enrichment_symbol <- do.call(rbind, symbol_genes_in_cat)
-    gsea_output_df[[gsea_term_tmp]] <- cbind(gsea_output_df[[gsea_term_tmp]], 
-                                             core_enrichment_symbol)
-    
-  }
-}
-```
-
-```{r}
-gseaplot2(gsea_output[[active_category]], geneSetID = "HALLMARK_ANGIOGENESIS")
-gseaplot2(gsea_output[[active_category]], geneSetID = "HALLMARK_MYC_TARGETS_V1")
-gseaplot2(gsea_output[[active_category]], geneSetID = "HALLMARK_HYPOXIA")
-gseaplot2(gsea_output[[active_category]], geneSetID = "HALLMARK_MYOGENESIS")
+EnhancedVolcano(DE_table_WTR26_CR,
+    labSize=2,
+    title = paste("HA signal at K27me3 SEACR peaks \n in WT vs R62C"),
+    x = 'log2FoldChange',
+    y = 'padj',
+    pCutoff = 0.05,
+    subtitle ="",
+    ylab = bquote(~-Log[10]~italic(padj)),
+    legendLabels = c('NS', expression(Log[2]~FC),
+    'padj', expression(padj~and~log[2]~FC)))
 
 ```
-
-
-
-
