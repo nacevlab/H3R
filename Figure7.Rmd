@@ -1,0 +1,89 @@
+---
+title: "Figure 7"
+author: 
+  - "Matt Paul"
+  - "Bioinformatics Resource Center"
+  - "Rockefeller University"
+date: '2023-04-14'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Figure 7
+This is a collection of code that was used to generate the plots in Figure 7. 
+
+## Figure S7
+
+### Figure S7A
+
+```{R}
+
+library(msigdbr)
+library(org.Mm.eg.db)
+library(dplyr)
+library(rio)
+library(AnnotationDbi)
+
+global_ids <- keys(org.Mm.eg.db)
+m_df <- msigdbr(species = "Mus musculus")
+POLY<- m_df %>% dplyr::filter(grepl("Polycomb|PRC2|K27me3", gs_description, ignore.case=TRUE)) %>% dplyr::select(c(3,5))
+
+DE_table_WTR2_CR <- rio::import_list("GEO/final files/ChIP_R2C_minus_WT_annotated.xlsx")
+
+DE_table_WTR2_CR <- DE_table_WTR2_CR[!is.na(DE_table_WTR2_CR$padj),]
+DE_table_WTR2_CR_up_sig <-DE_table_WTR2_CR[DE_table_WTR2_CR$log2FoldChange > 0 & DE_table_WTR2_CR$padj < 0.001,]
+DE_table_WTR2_CR_down_sig <-DE_table_WTR2_CR[DE_table_WTR2_CR$log2FoldChange < 0 & DE_table_WTR2_CR$padj < 0.001,]
+
+DE_table_WTR2_CR_up <- DE_table_WTR2_CR[DE_table_WTR2_CR$log2FoldChange > 0 & DE_table_WTR2_CR$padj < 0.05,]
+DE_table_WTR2_CR_down <- DE_table_WTR2_CR[DE_table_WTR2_CR$log2FoldChange < 0 & DE_table_WTR2_CR$padj < 0.05,]
+
+DE_table_WTR2_CR_up_sig_gr <- GRanges(seqnames=DE_table_WTR2_CR_up_sig$seqnames, IRanges(as.numeric(DE_table_WTR2_CR_up_sig$start), as.numeric(DE_table_WTR2_CR_up_sig$end)))
+DE_table_WTR2_CR_down_sig_gr <- GRanges(seqnames=DE_table_WTR2_CR_down_sig$seqnames, IRanges(as.numeric(DE_table_WTR2_CR_down_sig$start), as.numeric(DE_table_WTR2_CR_down_sig$end)))
+DE_table_WTR2_CR_gr <- GRanges(seqnames=DE_table_WTR2_CR$seqnames, IRanges(as.numeric(DE_table_WTR2_CR$start), as.numeric(DE_table_WTR2_CR$end)))
+
+
+
+DE_table_WTR2_CR_up_sig_anno <- as.data.frame(annotatePeak(DE_table_WTR2_CR_up_sig_gr, TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene, annoDb = "org.Mm.eg.db"))
+DE_table_WTR2_CR_down_sig_anno <- as.data.frame(annotatePeak(DE_table_WTR2_CR_down_sig_gr, TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene, annoDb = "org.Mm.eg.db"))
+DE_table_WTR2_CR_sig_anno <- as.data.frame(annotatePeak(DE_table_WTR2_CR_gr, TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene, annoDb = "org.Mm.eg.db"))
+
+DE_table_WTR2_CR_up_sig_anno_tss <- DE_table_WTR2_CR_up_sig_anno[DE_table_WTR2_CR_up_sig_anno$distanceToTSS==0,]
+DE_table_WTR2_CR_down_sig_anno_tss <- DE_table_WTR2_CR_down_sig_anno[DE_table_WTR2_CR_down_sig_anno$distanceToTSS==0,]
+DE_table_WTR2_CR_sig_anno_tss <- DE_table_WTR2_CR_sig_anno[DE_table_WTR2_CR_sig_anno$distanceToTSS==0,]
+
+a <- unique(my_diff_up_sig_anno_tss$geneId)
+b <- unique(my_diff_down_sig_anno_tss$geneId)
+c <- unique(my_diff_anno_tss$geneId)
+
+d <- unique(DE_table_WTR2_CR_up_sig_anno_tss$geneId)
+e <- unique(DE_table_WTR2_CR_down_sig_anno_tss$geneId)
+f <- unique(DE_table_WTR2_CR_sig_anno_tss$geneId)
+
+IDs <- keys(org.Mm.eg.db, keytype="ENTREZID")
+sym_ids <- AnnotationDbi::select(org.Mm.eg.db, IDs, columns = c("SYMBOL", "ENTREZID"), keytype = "ENTREZID")
+
+```
+
+
+```{r}
+
+library(clusterProfiler)
+
+enricher_1_out <- enricher(intersect(b,e), TERM2GENE=POLY, pvalueCutoff=1, qvalueCutoff=1, minGSSize = 1, maxGSSize = 1000)
+enricher_1 <- enricher(intersect(b,e), TERM2GENE=POLY, minGSSize = 1, maxGSSize = 1000)
+
+dotplot(enricher_1) + ggtitle("H3K4me3 (down) and H3K27me3 (down) peak overlaps\n in R2 mutant/WT - Polycomb groups") + theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+### Figure S7B
+
+```{r}
+enricher_2_out <- enrichGO(intersect(b,e), OrgDb = org.Mm.eg.db, ont = "ALL", pvalueCutoff=1, qvalueCutoff=1, minGSSize = 1, maxGSSize = 1000)
+enricher_2 <- enrichGO(intersect(b,e), OrgDb = org.Mm.eg.db, ont = "ALL", minGSSize = 1, maxGSSize = 1000)
+
+dotplot(enricher_2) + ggtitle("H3K4me3 (down) and H3K27me3 (down) peak overlaps\n in R2 mutant/WT - GO terms") + theme(plot.title = element_text(hjust = 0.5))
+```

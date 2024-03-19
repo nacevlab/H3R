@@ -1,0 +1,140 @@
+---
+title: "Figure 5"
+author: 
+  - "Matt Paul"
+  - "Bioinformatics Resource Center"
+  - "Rockefeller University"
+date: '2023-04-14'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Figure 5
+This is a collection of code that was used to generate the plots in Figure 5. 
+
+## Figure S5
+
+### Figure S5A
+
+```{r}
+
+library(ChIPseeker)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(org.Mm.eg.db)
+library(msigdbr)
+library(clusterProfiler)
+library(ggplot2)
+
+DE_table_WTR2_CR <- rio::import("GEO/final files/ChIP_R2C_minus_WT_annotated.xlsx")
+DE_table_WTR26_CR <- rio::import("GEO/final files/ChIP_R26C_minus_WT_annotated.xlsx")
+
+colnames(DE_table_WTR2_CR) <- paste0(colnames(DE_table_WTR2_CR),"_1")
+colnames(DE_table_WTR26_CR) <- paste0(colnames(DE_table_WTR26_CR),"_1")
+
+R2_gr <- GRanges(seqnames = DE_table_WTR2_CR[,8], ranges = IRanges(start = DE_table_WTR2_CR[,9], end = DE_table_WTR2_CR[,10]))
+R26_gr <- GRanges(seqnames = DE_table_WTR26_CR[,8], ranges = IRanges(start = DE_table_WTR26_CR[,9], end = DE_table_WTR26_CR[,10]))
+
+R2C_anno <- annotatePeak(R2_gr, TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene, annoDb = "org.Mm.eg.db")
+R26C_anno <- annotatePeak(R26_gr,TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene, annoDb = "org.Mm.eg.db")
+
+DE_table_WTR2_CR <- cbind(DE_table_WTR2_CR, as.data.frame(R2C_anno))
+DE_table_WTR26_CR <- cbind(DE_table_WTR26_CR, as.data.frame(R26C_anno))
+
+combined_GO <-list(
+  DE_table_WTR2_CR %>%  dplyr::filter(distanceToTSS == 0) %>% dplyr::filter(padj_1 < 0.001) %>%  dplyr::pull(geneId) %>% unique(),
+     DE_table_WTR26_CR %>%  dplyr::filter(distanceToTSS == 0) %>% dplyr::filter(padj_1 < 0.001) %>%  dplyr::pull(geneId) %>% unique()
+)
+
+global_ids <- keys(org.Mm.eg.db)
+m_df <- msigdbr(species = "Mus musculus")
+POLY<- m_df %>% dplyr::filter(grepl("Polycomb|PRC2|K27me3", gs_description, ignore.case=TRUE)) %>% dplyr::select(c(3,5))
+```
+
+```{r}
+permutation <- sapply(1:1000, function(x){
+  
+  ids_1 <- sample(global_ids, lengths(combined_GO)[1])
+  enricher_1 <- enricher(ids_1, TERM2GENE=POLY, pvalueCutoff=1, qvalueCutoff=1, minGSSize = 1,
+  maxGSSize = 1000)
+  
+  out <- t(as.data.frame( enricher_1 ))
+  
+  return(t(as.data.frame( enricher_1 )))
+  
+  })
+
+perm_df <- do.call("rbind", sapply(permutation,t))
+
+grps <- c("MEISSNER_NPC_HCP_WITH_H3K27ME3", "MEISSNER_NPC_HCP_WITH_H3K4ME2_AND_H3K27ME3",
+  "MIKKELSEN_MCV6_HCP_WITH_H3K27ME3", "MEISSNER_BRAIN_HCP_WITH_H3K27ME3",
+  "MEISSNER_NPC_HCP_WITH_H3K4ME3_AND_H3K27ME3","MIKKELSEN_NPC_HCP_WITH_H3K27ME3",
+  "MIKKELSEN_NPC_HCP_WITH_H3K4ME3_AND_H3K27ME3", "MIKKELSEN_MEF_ICP_WITH_H3K27ME3",
+  "MIKKELSEN_MCV6_ICP_WITH_H3K27ME3", "MIKKELSEN_IPS_ICP_WITH_H3K27ME3",
+  "MIKKELSEN_MEF_LCP_WITH_H3K27ME3", "MIKKELSEN_MEF_ICP_WITH_H3K4ME3_AND_H3K27ME3")
+  
+```
+
+```{r}
+toplot <- perm_df[perm_df[,1] %in% grps,]
+toplot <- as.data.frame(toplot)
+toplot[,"p.adjust"] <- as.numeric(toplot[,"p.adjust"])
+
+cut_off <- toplot %>% 
+  group_by(ID) %>% 
+  summarise(thresh = quantile(p.adjust, probs = 0.05))
+
+```
+
+```{r}
+
+ggplot(toplot, aes(x=ID, y=p.adjust)) + geom_violin() + theme_bw() + theme(axis.text.x = element_text(angle = 90)) + ylim(0,1) + ggtitle("Violin plot of adjusted pvalues for \n GO term enrichment tests. 1000 randomly\n  permuted gene cohorts (2114 genes - R2C) \n 95% perecntile is blue dot \n 0.05 is red line") + geom_jitter(data=cut_off, aes(x=ID, y=thresh),width = 0, height = 0, color="blue", size=4) + geom_abline(intercept = 0.05, slope = 0, color="red", size=1)
+
+``` 
+
+### Figure S5B
+
+```{r}
+permutation <- sapply(1:1000, function(x){
+  
+  ids_2 <- sample(global_ids, lengths(combined_GO)[2])
+  
+  enricher_2 <- enricher(ids_2, TERM2GENE=POLY, pvalueCutoff=1, qvalueCutoff=1, minGSSize = 1,
+  maxGSSize = 1000)
+  
+  out <- t(as.data.frame( enricher_2 ))
+  
+  return(t(as.data.frame( enricher_2 )))
+  
+  })
+
+perm_df <- do.call("rbind", sapply(permutation,t))
+
+grps <- c("MEISSNER_NPC_HCP_WITH_H3K27ME3", "MEISSNER_NPC_HCP_WITH_H3K4ME2_AND_H3K27ME3",
+  "MIKKELSEN_MCV6_HCP_WITH_H3K27ME3", "MEISSNER_BRAIN_HCP_WITH_H3K27ME3",
+  "MEISSNER_NPC_HCP_WITH_H3K4ME3_AND_H3K27ME3","MIKKELSEN_NPC_HCP_WITH_H3K27ME3",
+  "MIKKELSEN_NPC_HCP_WITH_H3K4ME3_AND_H3K27ME3", "MIKKELSEN_MEF_ICP_WITH_H3K27ME3",
+  "MIKKELSEN_MCV6_ICP_WITH_H3K27ME3", "MIKKELSEN_IPS_ICP_WITH_H3K27ME3",
+  "MIKKELSEN_MEF_LCP_WITH_H3K27ME3", "MIKKELSEN_MEF_ICP_WITH_H3K4ME3_AND_H3K27ME3")
+  
+```
+
+```{r}
+toplot <- perm_df[perm_df[,1] %in% grps,]
+toplot <- as.data.frame(toplot)
+toplot[,"p.adjust"] <- as.numeric(toplot[,"p.adjust"])
+
+
+cut_off <- toplot %>% 
+  group_by(ID) %>% 
+  summarise(thresh = quantile(p.adjust, probs = 0.05))
+
+```
+
+```{r}
+ggplot(toplot, aes(x=ID, y=p.adjust)) + geom_violin() + theme_bw() + theme(axis.text.x = element_text(angle = 90)) + ylim(0,1) + ggtitle("Violin plot of adjusted pvalues for \n GO term enrichment tests. 1000 randomly\n  permuted gene cohorts (1277 genes - R26C) \n 95% perecntile is blue dot \n 0.05 is red line") + geom_jitter(data=cut_off, aes(x=ID, y=thresh),width = 0, height = 0, color="blue", size=4) + geom_abline(intercept = 0.05, slope = 0, color="red", size=1)
+
+``` 
+
