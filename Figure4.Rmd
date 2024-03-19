@@ -10,7 +10,6 @@ author:
 date: '2023-04-14'
 output: html_document
 ---
----
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -78,7 +77,7 @@ R2CvsR26C_mouse_go<-doGO(R2CvsR26C %>% pull(ENTREZID))
 ```
 
 ```{py}
- Create a csv file from TOPGO analysis with first column depicting GO Terms, 2nd column depicting -log10(result2), 3rd column depicting Significant/Expected
+ # Create a csv file from TOPGO analysis with first column depicting GO Terms, 2nd column depicting -log10(result2), 3rd column depicting Significant/Expected
 #Import libraries
 import numpy as np
 import matplotlib.pyplot as plt
@@ -164,53 +163,84 @@ all_temp %>% mutate(class=factor(class, levels=c("Up", "Down", "NS"))) %>% ggplo
 install_CondaTools("meme", "meme", pathToMiniConda = "../mini")
 meme_path_id="../mini/envs/meme/bin/"
 
-```
+download.file("https://meme-suite.org/meme/meme-software/Databases/motifs/motif_databases.12.24.tgz", "motif_databases.12.24.tgz")
 
-```{r}
+library(universalmotif)
+library(magrittr)
+meme_path_id="../mini/envs/meme/bin/"
 
-require(JASPAR2020)
-db <- file.path(system.file("extdata", package="JASPAR2020"),
-                "JASPAR2020.sqlite")
-opts <- list()
-opts[["tax_group"]] <- "vertebrates"
-opts[["collection"]] <- "CORE"
-opts[["all_versions"]] <- FALSE
-require(TFBSTools)
-motifs <- getMatrixSet(db,opts)
-uni_format_motif <- universalmotif::convert_motifs(motifs)
+meme_db <- read_meme("motif_databases/CIS-BP_2.00/Mus_musculus.meme") %>% to_df()
 
 ```
 
 ```{r}
+library(GenomicRanges)
+library(org.Mm.eg.db)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(dplyr)
+library(BSgenome.Mmusculus.UCSC.mm10)
+library(memes)
 
-is.na(dge_temp$padj)[is.na(dge_temp$padj) ]<-1
-all_temp <- rna_res %>% as_tibble(rownames = "ENTREZ") %>% full_join(dge_temp, by=c("ENTREZ" = "geneId")) %>% dplyr::mutate(class=ifelse(!(padj.y<0.001), "NS",ifelse(log2FoldChange.y>0,"Up", "Down"))) %>% dplyr::filter(distanceToTSS==0)
+DE_table <- rio::import("GEO/final files/ChIP_R26C_minus_WT_annotated.xlsx")
+dge_temp <- DE_table
 
+dge_gr <- GRanges(dge_temp$seqnames, IRanges(dge_temp$start, dge_temp$end ))
+
+anno_1 <- ChIPseeker::annotatePeak(dge_gr ,TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene, annoDb = "org.Mm.eg.db", verbose=F)
+dge_temp <- cbind(as.data.frame(anno_1),dge_temp)
+is.na(dge_temp$padj)[is.na(dge_temp$padj) ] <- 1
+
+colnames(dge_temp)[1:5] <-  paste0(colnames(dge_temp)[1:5],"_2")
+all_temp <- dge_temp %>% dplyr::mutate(class=ifelse(!(padj<0.001), "NS",ifelse(log2FoldChange>0,"Up", "Down"))) %>% dplyr::filter(distanceToTSS==0)
 
 all_temp <- all_temp[!is.na(all_temp$class), ]
 all_temp %<>% mutate(class=factor(class, levels=c("Up", "Down", "NS"))) 
-all_temp <- all_temp[!is.na(all_temp$log2FoldChange.x),]
+all_temp <- all_temp[!is.na(all_temp$log2FoldChange),]
 
 all_genes <- genes(TxDb.Mmusculus.UCSC.mm10.knownGene)
 promoter_ranges <- promoters(all_genes,  upstream=1000, downstream=200)
-promoter_ranges_alldownpeaks <- promoter_ranges[promoter_ranges$gene_id %in% all_temp$ENTREZ[all_temp$class=="Down"]]
+promoter_ranges_alldownpeaks <- promoter_ranges[promoter_ranges$gene_id %in% all_temp$geneId[all_temp$class=="Down"]]
 
 peaksSequences_alldownpeaks <- getSeq(BSgenome.Mmusculus.UCSC.mm10, promoter_ranges_alldownpeaks)
-writeXStringSet(peaksSequences_alldownpeaks, file = "fa/prom_alldownpeaks.fa")
+writeXStringSet(peaksSequences_alldownpeaks, file = "prom_alldownpeaks.fa")
+peaksSequences_allpeaks <- getSeq(BSgenome.Mmusculus.UCSC.mm10, promoter_ranges)
+writeXStringSet(peaksSequences_allpeaks, file = "prom_allpeaks.fa")
 
-dreme_results_alldownpeaks_shuff <- runDreme(input = peaksSequences_alldownpeaks,
-                  control = "shuffle",
-                  e = 50,
-                  outdir = "meme_all",
-                  meme_path = meme_path_id)
+ame_by_binding_shuff <- runAme("prom_alldownpeaks.fa", meme_path = meme_path_id, database = "motif_databases/CIS-BP_2.00/Mus_musculus.meme", silent = FALSE)
 
-TomTom_results_all_down <- runTomTom(dreme_results_alldownpeaks_shuff, 
-                                   uni_format_motif, 
-                                   outdir = "R26C/tomtom_alldown_shuffle",
-                                   meme_path = meme_path_id)
+ame_by_binding_background <- runAme("prom_alldownpeaks.fa", control ="prom_allpeaks.fa", meme_path = meme_path_id, database = "motif_databases/CIS-BP_2.00/Mus_musculus.meme", silent = FALSE)
+
+results <- list(ame_by_binding_shuff,
+                ame_by_binding_background)
+
+names(results) <-c("shuffled_background", "promoter_background")
+
+rio::export(results, "CISBP_2.00_motif_analysis.xlsx")
+```
+
+```{r}
+library(magrittr)
+library(stringr)
+
+library(motifStack)
+motifs_hit <- rio::import("CISBP_2.00_motif_analysis.xlsx")
+motifs <- importMatrix("motif_databases/CIS-BP_2.00/Mus_musculus.meme")
+
+my_names <- names(motifs) %>% str_split("2.00", simplify = T) %>% .[,1] %>% paste0(.,"2.00")
+
+motif_sub <- motifs[my_names %in% motifs_hit$motif_id]
 
 ```
 
+```{r motifs, fig.width=11, fig.height=10, dpi=90, fig.path='plots/', dev=c('png', 'pdf'), eval=F}
+
+sapply(1:length(motif_sub), function(x){
+  
+  a <- plot(motif_sub[[x]])
+  print(a)
+})
+
+```
 
 ### Figure 4E
 - Gene set enrichment analysis of R26vsWT. Pathways are from MSigDB Hallmarks
@@ -297,9 +327,194 @@ gseaplot2(gsea_output[[active_category]], geneSetID = "HALLMARK_MYOGENESIS")
 
 ```
 
+## Figure S4
+### Figure S4A
+- Volcano plots of C+R
 
+```{r}
+DE_table_WTR2_CR <- read.table("GEO/final files/CR_H3K27me3atH3K27me3_R2C_minus_WT_DEG.tsv", header = T)
+DE_table_WTR26_CR <- read.table("GEO/final files/CR_H3K27me3atH3K27me3_R26C_minus_WT_DEG.tsv", header = T)
 
+EnhancedVolcano(DE_table_WTR2_CR,
+    labSize=2,
+    title = paste("K27me3 signal at K27me3 SEACR peaks \n in WT vs R2C"),
+    x = 'log2FoldChange',
+    y = 'padj',
+    pCutoff = 0.05,
+    subtitle ="",
+    ylab = bquote(~-Log[10]~italic(padj)),
+    legendLabels = c('NS', expression(Log[2]~FC),
+    'padj', expression(padj~and~log[2]~FC)))
 
+EnhancedVolcano(DE_table_WTR26_CR,
+    labSize=2,
+    title = paste("K27me3 signal at K27me3 SEACR peaks \n in WT vs R62C"),
+    x = 'log2FoldChange',
+    y = 'padj',
+    pCutoff = 0.05,
+    subtitle ="",
+    ylab = bquote(~-Log[10]~italic(padj)),
+    legendLabels = c('NS', expression(Log[2]~FC),
+    'padj', expression(padj~and~log[2]~FC)))
+
+```
+
+### Figure S4B and S4C
+- Region plots of C+R
+
+```{r}
+
+chip_bw <- dir("/GEO/final files/CR/H3K27me3/mean/", pattern=".bw", full.names = T)
+
+bed <- paste0("/GEO/final files/CR/H3K27me3/K27_consensus_peaks.bed")
+
+chipProfile_peaks <- BamBigwig_to_chipProfile(signalFiles = chip_bw,
+                         testRanges = bed,
+                         format = "bigwig",
+                         style = "point", 
+                         distanceAround=10000,
+                         bin_size = 200)
+
+proplyr_object_peaks <- as_profileplyr(chipProfile_peaks)
+
+row.names(sampleData(proplyr_object_peaks)) <- chip_bw %>% basename()
+
+rowData(proplyr_object_peaks )$sgGroup<-'K27me3 at center of K27me3 SEACR peak +/- 10kb'
+
+generateEnrichedHeatmap(proplyr_object_peaks, matrices_color = c("blue", "yellow", "red"))
+```
+
+```{r}
+
+chip_bw <- dir("/GEO/final files/CR/H3K27me3/singlerep/", pattern=".bw", full.names = T)
+
+bed <- paste0("/GEO/final files/CR/H3K27me3/K27_consensus_peaks.bed")
+
+chipProfile_peaks <- BamBigwig_to_chipProfile(signalFiles = chip_bw,
+                         testRanges = bed,
+                         format = "bigwig",
+                         style = "point", 
+                         distanceAround=10000,
+                         bin_size = 200)
+
+proplyr_object_peaks <- as_profileplyr(chipProfile_peaks)
+
+row.names(sampleData(proplyr_object_peaks)) <- chip_bw %>% basename()
+
+rowData(proplyr_object_peaks )$sgGroup<-'K27me3 at center of K27me3 SEACR peak +/- 10kb'
+
+generateEnrichedHeatmap(proplyr_object_peaks, matrices_color = c("blue", "yellow", "red"))
+
+```
+
+### Figure S4D
+
+```{r}
+#10T
+library(GenomicRanges)
+library(magrittr)
+library(ggplot2)
+library(SummarizedExperiment)
+library(tidyr)
+
+load("K27_counts.RData") 
+load("K27_consensus_peaks.RData") 
+
+R2C_peaks <- apply(mcols(allPeaksSet_consensus)[,c("R2C_R1","R2C_R2","R2C_R3")],1, all)
+R26C_peaks <- apply(mcols(allPeaksSet_consensus)[,c("R26C_R1","R26C_R2","R26C_R3")],1, all)
+
+count_sums <- assay(this_Counts) %>% apply(2, sum)
+this_Counts_cpm <- sapply(1:length(count_sums), function(x){
+  count_out <- assay(this_Counts)[,x]/count_sums[x]
+  count_out <- (count_out)*1000000
+  return(count_out)
+})
+colnames(this_Counts_cpm) <- colnames(this_Counts)
+
+this_Counts_R2C <- this_Counts_cpm[R2C_peaks,] %>% .[,c(1:6)]
+this_Counts_R26C <- this_Counts_cpm[R26C_peaks,] %>% .[,c(1:3,7:9)]
+
+colnames(this_Counts_R2C) <- c("R2C_R1","R2C_R2","R2C_R3", "WT_R1","WT_R2","WT_R3")
+colnames(this_Counts_R26C) <- c("R26C_R1","R26C_R2","R26C_R3", "WT_R1","WT_R2","WT_R3")
+
+this_Counts_R2C_df <- rbind(this_Counts_R2C[,c(1,4)],
+                            this_Counts_R2C[,c(2,5)],
+                            this_Counts_R2C[,c(3,6)])
+
+this_Counts_R26C_df <- rbind(this_Counts_R26C[,c(1,4)],
+                            this_Counts_R26C[,c(2,5)],
+                            this_Counts_R26C[,c(3,6)])
+
+colnames(this_Counts_R2C_df) <- c("WT","R2C")
+colnames(this_Counts_R26C_df) <- c("WT","R26C")
+
+```
+
+```{r}
+
+ggplot(as.data.frame(this_Counts_R2C_df), aes(x = WT, y = R2C, alpha=0.4)) + geom_point() + geom_abline(intercept = 0, slope = 1, color = "red") + theme_bw() + labs(title = "R2C - 10T - K27me3 - Counts", x = "WT", y = "R2C") + 
+  scale_y_continuous(trans='log2', limits = c(1, 16500)) +
+  scale_x_continuous(trans='log2', limits = c(1, 16500))
+
+```
+
+```{r}
+
+ggplot(as.data.frame(this_Counts_R26C_df), aes(x = WT, y = R2C, alpha=0.4)) + geom_point() + geom_abline(intercept = 0, slope = 1, color = "red") + theme_bw() + labs(title = "R2C - 10T - K27me3 - Counts", x = "WT", y = "R2C") + 
+  scale_y_continuous(trans='log2', limits = c(1, 16500)) +
+  scale_x_continuous(trans='log2', limits = c(1, 16500))
+
+```
+
+### Figure S4E
+
+```{r}
+
+my_df <- pivot_longer(as.data.frame(this_Counts_R2C), 1:6, names_to = "Sample",values_to = "CPM")
+my_df$Sample <- factor(my_df$Sample, levels = c("WT_R1","WT_R2","WT_R3","R2C_R1","R2C_R2","R2C_R3"))
+ggplot(my_df , aes(x = Sample, y = CPM,)) + geom_boxplot() + scale_y_continuous(trans='log2', limits = c(1, 16500)) + theme_bw()
+
+```
+
+```{r}
+
+my_df <- pivot_longer(as.data.frame(this_Counts_R26C), 1:6, names_to = "Sample",values_to = "CPM")
+my_df$Sample <- factor(my_df$Sample, levels = c("WT_R1","WT_R2","WT_R3","R26C_R1","R26C_R2","R26C_R3"))
+ggplot(my_df , aes(x = Sample, y = CPM,)) + geom_boxplot() + scale_y_continuous(trans='log2', limits = c(1, 16500)) + theme_bw()
+
+```
+
+### Figure S4F
+
+- Volcano plots of C+R
+
+```{r}
+DE_table_WTR2_CR <- read.table("GEO/final files/CR_HAatH3K27me3_R2C_minus_WT_DEG.tsv", header = T)
+DE_table_WTR26_CR <- read.table("GEO/final files/CR_HAatH3K27me3_R26C_minus_WT_DEG.tsv", header = T)
+
+EnhancedVolcano(DE_table_WTR2_CR,
+    labSize=2,
+    title = paste("HA signal at K27me3 SEACR peaks \n in WT vs R2C"),
+    x = 'log2FoldChange',
+    y = 'padj',
+    pCutoff = 0.05,
+    subtitle ="",
+    ylab = bquote(~-Log[10]~italic(padj)),
+    legendLabels = c('NS', expression(Log[2]~FC),
+    'padj', expression(padj~and~log[2]~FC)))
+
+EnhancedVolcano(DE_table_WTR26_CR,
+    labSize=2,
+    title = paste("HA signal at K27me3 SEACR peaks \n in WT vs R62C"),
+    x = 'log2FoldChange',
+    y = 'padj',
+    pCutoff = 0.05,
+    subtitle ="",
+    ylab = bquote(~-Log[10]~italic(padj)),
+    legendLabels = c('NS', expression(Log[2]~FC),
+    'padj', expression(padj~and~log[2]~FC)))
+
+```
 
 
 
